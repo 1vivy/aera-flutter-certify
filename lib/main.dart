@@ -7,10 +7,14 @@ import 'cert/report.dart';
 import 'cert/suite.dart';
 
 Future<void> main() async {
+  Startup.mainToFirstFrame.start();
   Startup.atMain = processAgeSeconds();
   await initAera();
   runApp(const CertifyApp());
-  WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((_) => Startup.atFirstFrame = processAgeSeconds());
+  WidgetsBinding.instance.waitUntilFirstFrameRasterized.then((_) {
+    Startup.mainToFirstFrame.stop();
+    Startup.atFirstFrame = processAgeSeconds();
+  });
 }
 
 class CertifyApp extends StatelessWidget {

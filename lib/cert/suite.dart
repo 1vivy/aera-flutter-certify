@@ -19,6 +19,7 @@ import 'state.dart';
 class Startup {
   static double? atMain;
   static double? atFirstFrame;
+  static final Stopwatch mainToFirstFrame = Stopwatch();
 }
 
 /// Runs the whole certification: interactive checks first (so the PC
@@ -54,12 +55,12 @@ class _SuiteState extends State<Suite> {
   });
 
   /// Waits for [done] or the timeout or the Skip button, whichever is first.
-  Future<bool> _await(Future<void> done) async {
+  Future<bool> _await(Future<void> done, [Duration? timeout]) async {
     setState(() => _skip = Completer<void>());
     var ok = false;
     await Future.any([
       done.then((_) => ok = true),
-      Future<void>.delayed(_waitTime),
+      Future<void>.delayed(timeout ?? _waitTime),
       _skip!.future,
     ]);
     setState(() => _skip = null);
@@ -91,8 +92,11 @@ class _SuiteState extends State<Suite> {
     // Startup and persistence.
     await WidgetsBinding.instance.waitUntilFirstFrameRasterized;
     final first = Startup.atFirstFrame ??= processAgeSeconds();
+    final fromMain = Startup.mainToFirstFrame.elapsedMicroseconds / 1e6;
     report.add(first == null
-        ? Result('startup', 'first frame', Grade.info, '/proc not readable')
+        ? Result('startup', 'first frame', gradeBelow(fromMain, 1, 2, 4),
+            '${fromMain.toStringAsFixed(2)} s from Dart main (process start unreadable: no /proc here; engine start not counted)$mode',
+            {'mainToFirstFrameSeconds': fromMain})
         : Result('startup', 'first frame', gradeBelow(first, 1.5, 3, 6),
             '${first.toStringAsFixed(2)} s from process start (Dart main at ${Startup.atMain?.toStringAsFixed(2)} s)$mode',
             {'mainSeconds': Startup.atMain, 'firstFrameSeconds': first}));
@@ -248,31 +252,39 @@ class _SuiteState extends State<Suite> {
   );
 
   Future<void> _typeCheck(Report report) async {
-    final done = Completer<String>();
+    // Typing and Enter are separate results: AERA's keyboard can deliver
+    // letters while its OK key only closes the keyboard.
+    final typed = Completer<void>();
+    final submitted = Completer<String>();
     final watch = Stopwatch()..start();
+    var text = '';
     _show(
-      'Type "aera" and press Enter',
+      'Type "aera", then press Enter (OK)',
       Padding(
         padding: const EdgeInsets.all(24),
         child: Center(
           child: TextField(
             autofocus: true,
             decoration: const InputDecoration(border: OutlineInputBorder(), labelText: 'Type aera'),
-            onSubmitted: (text) {
-              if (!done.isCompleted) done.complete(text);
+            onChanged: (value) {
+              text = value;
+              if (value.trim().toLowerCase() == 'aera' && !typed.isCompleted) typed.complete();
+            },
+            onSubmitted: (value) {
+              if (!submitted.isCompleted) submitted.complete(value);
             },
           ),
         ),
       ),
     );
-    final ok = await _await(done.future);
-    if (!ok) {
-      report.add(Result('input', 'text entry', Grade.skipped, 'nothing was submitted'));
-      return;
-    }
-    final text = await done.future;
-    report.add(Result('input', 'text entry', text.trim().toLowerCase() == 'aera' ? Grade.pass : Grade.fail,
-        'keyboard showed, "$text" submitted with Enter after ${watch.elapsedMilliseconds} ms'));
+    final gotText = await _await(Future.any([typed.future, submitted.future]));
+    final typedMs = watch.elapsedMilliseconds;
+    report.add(Result('input', 'text entry', gotText ? Grade.pass : (text.isEmpty ? Grade.skipped : Grade.fail),
+        gotText ? 'keyboard showed, "aera" arrived in $typedMs ms' : (text.isEmpty ? 'nothing was typed' : 'got "$text" instead of "aera"')));
+    if (!gotText) return;
+    final gotEnter = submitted.isCompleted || await _await(submitted.future, const Duration(seconds: 10));
+    report.add(Result('input', 'Enter submits', gotEnter ? Grade.pass : Grade.fail,
+        gotEnter ? 'Enter reached the text field (onSubmitted)' : "no Enter within 10 s: AERA's OK key closes its keyboard without sending Enter to the app"));
   }
 
   Future<void> _backCheck(Report report) async {
