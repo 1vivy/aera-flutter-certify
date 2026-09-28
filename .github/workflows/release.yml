@@ -1,0 +1,53 @@
+# Builds the app .aerap and publishes it as release v<version> (from
+# aera.json). Needs the kits release for this Flutter version in
+# 1vivy/aera-flutter-embedder. Run it from the Actions tab. A mode other than
+# release or a renderer other than gl is published as its own release,
+# v<version>-<mode>-<renderer>.
+name: Release
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Build mode (release is AOT-compiled)
+        type: choice
+        options: [release, profile, debug]
+        default: release
+      renderer:
+        description: How the app draws
+        type: choice
+        options: [gl, vulkan, impeller]
+        default: gl
+permissions:
+  contents: write
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.5
+          channel: stable
+      - run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+      - run: rustup target add aarch64-unknown-linux-gnu
+      - run: tool/aera.sh package
+        env:
+          AERA_RENDERER: ${{ inputs.renderer }}
+          AERA_MODE: ${{ inputs.mode }}
+      - id: meta
+        run: |
+          version=$(python3 -c "import json; print(json.load(open('aera.json'))['version'])")
+          [ "$MODE" = release ] || version=$version-$MODE
+          [ "$RENDERER" = gl ] || version=$version-$RENDERER
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+        env:
+          RENDERER: ${{ inputs.renderer }}
+          MODE: ${{ inputs.mode }}
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          name: ${{ steps.meta.outputs.version }}
+          body: |
+            Install on the phone from AERA's plugin screen. It installs as an unofficial app in the browser slot and replaces AERA Browser until you reinstall it.
+          files: build/aera/*.aerap

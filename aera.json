@@ -1,0 +1,5 @@
+{
+  "name": "Flutter Certify",
+  "version": "0.1.0",
+  "description": "Measures how well Flutter runs inside AERA Recovery: startup, frame rate, memory, input, text, audio, storage, network and crash recovery."
+}
